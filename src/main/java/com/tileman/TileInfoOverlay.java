@@ -25,6 +25,7 @@
  */
 package com.tileman;
 
+import net.runelite.api.coords.WorldPoint;
 import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayMenuEntry;
 import net.runelite.client.ui.overlay.OverlayPanel;
@@ -33,6 +34,8 @@ import net.runelite.client.ui.overlay.components.LineComponent;
 
 import javax.inject.Inject;
 import java.awt.*;
+import java.time.Instant;
+import java.time.Duration;
 
 import static net.runelite.api.MenuAction.RUNELITE_OVERLAY_CONFIG;
 import static net.runelite.client.ui.overlay.OverlayManager.OPTION_CONFIGURE;
@@ -65,6 +68,7 @@ class TileInfoOverlay extends OverlayPanel {
         String unspentTiles = addCommasToNumber(plugin.getRemainingTiles());
         String unlockedTiles = addCommasToNumber(plugin.getTotalTiles());
         String xpUntilNextTile = addCommasToNumber(plugin.getXpUntilNextTile());
+        String debugOutput = "Test";
 
         panelComponent.getChildren().add(LineComponent.builder()
                 .left(UNSPENT_TILES_STRING)
@@ -83,6 +87,31 @@ class TileInfoOverlay extends OverlayPanel {
         panelComponent.getChildren().add(LineComponent.builder()
                 .left(UNLOCKED_TILES)
                 .right(unlockedTiles)
+                .build());
+
+        // log update frequency
+        Instant now = Instant.now();
+        Duration elapsed = Duration.between(now,plugin.lastUpdate);
+        double totalSeconds = elapsed.toNanos() / 1_000_000_000.0;
+        String formattedSeconds = String.format("%.2f", totalSeconds);
+        panelComponent.getChildren().add(LineComponent.builder()
+                .left("TimeSinceUpdate:")
+                .right(formattedSeconds)
+                .build());
+
+        // log performance impact
+        double durationRead = plugin.lastReadDuration;
+        String formattedRead = String.format("%.2f", durationRead);
+        panelComponent.getChildren().add(LineComponent.builder()
+                .left("LastRead:")
+                .right(formattedRead)
+                .build());
+
+        double durationWrite = plugin.lastWriteDuration;
+        String formattedWrite = String.format("%.2f", durationWrite);
+        panelComponent.getChildren().add(LineComponent.builder()
+                .left("LastWrite:")
+                .right(formattedWrite)
                 .build());
 
         panelComponent.setPreferredSize(new Dimension(

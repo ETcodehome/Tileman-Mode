@@ -52,6 +52,9 @@ import javax.inject.Inject;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import java.time.Instant;
+import java.util.HashMap;
+
 @Slf4j
 @PluginDescriptor(
         name = "Tileman Mode",
@@ -130,6 +133,13 @@ public class TilemanModePlugin extends Plugin {
     private boolean inHouse = false;
     private long totalXp;
 
+    public Instant lastUpdate = Instant.now();
+
+    public double lastReadDuration = 0;
+    public double lastWriteDuration = 0;
+
+    public Map<Integer, Boolean[]> persistentTileCache = new HashMap<>();
+
     @Subscribe
     public void onMenuOptionClicked(MenuOptionClicked event) {
         if (event.getMenuAction().getId() != MenuAction.RUNELITE.getId() ||
@@ -179,7 +189,6 @@ public class TilemanModePlugin extends Plugin {
             return;
         }
         loadPoints();
-        updateTileCounter();
         inHouse = false;
     }
 
@@ -192,9 +201,12 @@ public class TilemanModePlugin extends Plugin {
             handleWalkedToTile(playerPosLocal);
         }
         lastAutoTilesConfig = config.automarkTiles();
-        updateTileCounter();
+        updateTileCounter(); // required because changing configs can change counts available
     }
 
+    public Client getClient(){
+        return client;
+    }
 
     @Subscribe
     public void onGameObjectSpawned(GameObjectSpawned event) {
@@ -207,6 +219,30 @@ public class TilemanModePlugin extends Plugin {
 
     @Override
     protected void startUp() {
+
+        // load the existing data the same way so we can runtime cache it
+        List<String> regions = configManager.getConfigurationKeys(CONFIG_GROUP + ".region");
+        for (String region : regions) {
+            String scrubbedRegion = removeRegionPrefix(region);
+            int regionID = Integer.parseInt(scrubbedRegion);
+
+            // default init the cache structure so there's never any runtime resizing
+            int maxRegionZ = 4;
+            int maxRegionX = 64;
+            int maxRegionY = 64;
+            int tilesPerZ = maxRegionX * maxRegionY;
+            int regionArraySize = maxRegionZ * maxRegionX * maxRegionY;
+            Boolean[] cachedTileData = new Boolean[regionArraySize];
+
+            Collection<TilemanModeTile> regionTiles = getTiles(regionID);
+            for (TilemanModeTile tile : regionTiles)
+            {
+                int tileIndex = tile.getZ() * tilesPerZ + tile.getRegionY() * maxRegionY + tile.getRegionX();
+                cachedTileData[tileIndex] = true;
+            }
+            persistentTileCache.put(regionID, cachedTileData);
+        }
+
         tutorialIslandRegionIds.add(12079);
         tutorialIslandRegionIds.add(12080);
         tutorialIslandRegionIds.add(12335);
@@ -241,11 +277,14 @@ public class TilemanModePlugin extends Plugin {
     }
 
     private void autoMark() {
+
+        // Guard against the players position being invalid
         final WorldPoint playerPos = client.getLocalPlayer().getWorldLocation();
         if (playerPos == null) {
             return;
         }
 
+        // Guard against being unable to calculate a local coord from player coord
         final LocalPoint playerPosLocal = LocalPoint.fromWorld(client, playerPos);
         if (playerPosLocal == null) {
             return;
@@ -265,7 +304,7 @@ public class TilemanModePlugin extends Plugin {
             log.debug("player moved");
             log.debug("last tile={}  distance={}", lastTile, lastTile == null ? "null" : lastTile.distanceTo(playerPosLocal));
         } else if (totalXp != currentTotalXp) {
-            updateTileCounter();
+            updateTileCounter(); // required because changing xp should recalculate available tiles
             totalXp = currentTotalXp;
         }
     }
@@ -341,11 +380,16 @@ public class TilemanModePlugin extends Plugin {
     }
 
     private void updateTileCounter() {
+
+        // begin tracking execution time
+        lastUpdate = Instant.now();
+        long startTime = System.nanoTime();
+
+
         List<String> regions = configManager.getConfigurationKeys(CONFIG_GROUP + ".region");
         int totalTiles = 0;
         for (String region : regions) {
             Collection<TilemanModeTile> regionTiles = getTiles(removeRegionPrefix(region));
-
             totalTiles += regionTiles.size();
         }
 
@@ -354,6 +398,10 @@ public class TilemanModePlugin extends Plugin {
         updateTotalTilesUsed(totalTiles);
         updateRemainingTiles(totalTiles);
         updateXpUntilNextTile();
+
+        long endTime = System.nanoTime(); // Record the end time
+        long durationInNanos = endTime - startTime;
+        lastReadDuration = durationInNanos;
     }
 
     private void updateTotalTilesUsed(int totalTilesCount) {
@@ -622,6 +670,9 @@ public class TilemanModePlugin extends Plugin {
     }
 
     private void updateTileMark(LocalPoint localPoint, boolean markedValue) {
+
+        long startTime = System.nanoTime();
+
         if(containsAnyOf(getTileMovementFlags(localPoint), fullBlock)) {
             return;
         }
@@ -645,6 +696,12 @@ public class TilemanModePlugin extends Plugin {
         }
 
         savePoints(regionId, tilemanModeTiles);
+
+        long endTime = System.nanoTime(); // Record the end time
+        long durationInNanos = endTime - startTime;
+        lastWriteDuration = durationInNanos;
+
+
         loadPoints();
     }
 

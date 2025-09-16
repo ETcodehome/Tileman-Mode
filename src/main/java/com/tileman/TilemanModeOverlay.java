@@ -74,6 +74,14 @@ public class TilemanModeOverlay extends Overlay
 		return null;
 	}
 
+	private void drawActiveRegions(Graphics2D graphics)
+	{
+		for (int region : client.getLocalPlayer().getWorldView().getMapRegions())
+		{
+
+		}
+	}
+
 	private void drawTile(Graphics2D graphics, WorldPoint point)
 	{
 		WorldPoint playerLocation = client.getLocalPlayer().getWorldLocation();
