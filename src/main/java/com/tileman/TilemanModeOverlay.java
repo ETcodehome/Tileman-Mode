@@ -30,6 +30,10 @@ import net.runelite.api.*;
 import net.runelite.api.Point;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldPoint;
+import net.runelite.api.hooks.DrawCallbacks;
+import net.runelite.client.plugins.gpu.GpuPlugin;
+import net.runelite.client.ui.DrawManager;
+import net.runelite.client.ui.JagexColors;
 import net.runelite.client.ui.overlay.*;
 
 import javax.inject.Inject;
@@ -192,9 +196,14 @@ public class TilemanModeOverlay extends Overlay
 		return new BasicStroke(1.5f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL, 0, dashPattern, dashPhase);
 	}
 
+	private int[] previousRegions = null;
+
 	@Override
 	public Dimension render(Graphics2D g)
 	{
+		Scene scene = client.getScene();
+		Tile[][][] tiles = scene.getTiles();
+
 		updatePathIfOutdated();
 
 		// draw group tileman data first so that player centric rendering draws on top of them
@@ -285,6 +294,15 @@ public class TilemanModeOverlay extends Overlay
 			if (config.showClaimCosts()) {
 				int tileCount = config.showClaimCostsAsRemaining() ? plugin.getRemainingTiles() - tilesRequired : tilesRequired;
 				drawTileText(g, tile, textColor, String.valueOf(tileCount));
+			}
+		}
+
+		int[] playerRegions = client.getLocalPlayer().getWorldView().getMapRegions();
+		if (playerRegions != null) {
+			if (previousRegions == null || playerRegions != previousRegions) {
+				plugin.print("CHANGED REGIONS");
+				previousRegions = playerRegions;
+				plugin.reloadMap();
 			}
 		}
 

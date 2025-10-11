@@ -26,6 +26,7 @@
  */
 package com.tileman;
 
+import com.formdev.flatlaf.util.HSLColor;
 import com.google.common.base.Strings;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
@@ -38,12 +39,17 @@ import net.runelite.api.*;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.*;
+import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.plugins.PluginInstantiationException;
+import net.runelite.client.plugins.PluginManager;
+import net.runelite.client.plugins.gpu.GpuPlugin;
 import net.runelite.client.ui.ClientToolbar;
+import net.runelite.client.ui.JagexColors;
 import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.util.ImageUtil;
@@ -52,6 +58,8 @@ import net.runelite.client.chat.QueuedMessage;
 import net.runelite.client.game.chatbox.ChatboxPanelManager;
 
 import javax.inject.Inject;
+import javax.swing.*;
+import java.awt.*;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
@@ -120,7 +128,13 @@ public class TilemanModePlugin extends Plugin {
     private ChatMessageManager chatMessageManager;
 
     @Inject
+    private PluginManager pluginManager;
+
+    @Inject
     private ChatboxPanelManager chatboxPanelManager;
+
+    @Inject
+    private ClientThread clientThread;
 
     @Provides
     TilemanModeConfig provideConfig(ConfigManager configManager) {
@@ -154,7 +168,6 @@ public class TilemanModePlugin extends Plugin {
     private boolean inHouse = false;
     private long totalXp;
     private boolean dataMigrationInProgress = false;
-
     public Duration durationLastStart;
     public Duration durationLastWayfind;
     public Duration durationLastRegionRead;
@@ -217,6 +230,11 @@ public class TilemanModePlugin extends Plugin {
             return;
         }
 
+        // build subset of tiles outside the path to render
+        Set<WorldPoint> simpleTiles = new HashSet<>(getTilesToRender());
+        Scene scene = client.getScene();
+        Tile[][][] tiles = scene.getTiles();
+
         updateTileCountFromConfigs();
         updateTilesToRender();
         inHouse = false;
@@ -240,6 +258,8 @@ public class TilemanModePlugin extends Plugin {
             handleWalkedToTile(playerPosLocal);
         }
         lastAutoTilesConfig = config.automarkTiles();
+        log.debug("CONFIG CHANGED");
+
         updateTileCountFromConfigs();
     }
 
@@ -253,7 +273,7 @@ public class TilemanModePlugin extends Plugin {
     }
 
     @Override
-    protected void startUp() {
+    protected void startUp() throws PluginInstantiationException {
 
         log.debug("TileManMode Startup - Start");
 
@@ -270,6 +290,7 @@ public class TilemanModePlugin extends Plugin {
         overlayManager.add(infoOverlay);
 
         // update so we render if the plugin has just been freshly enabled.
+        log.debug("STARTUP");
         updateTileCountFromConfigs();
         updateTilesToRender();
 
@@ -286,6 +307,7 @@ public class TilemanModePlugin extends Plugin {
 
         // check if legacy group tileman data is found
         groupTilemanDataManager.generateLegacyGroupTilemanPluginWarning();
+
     }
 
     @Override
@@ -297,6 +319,110 @@ public class TilemanModePlugin extends Plugin {
         overlayManager.remove(infoOverlay);
         tilesToRender.clear();
         groupTilesToRender.clear();
+    }
+
+    @Subscribe
+    @SuppressWarnings("unused")
+    public void onPreMapLoad(PreMapLoad preMapLoad) {
+
+        // STRONGLY AVOID CLIENT CALLS HERE
+
+        Tile[][][] tiles = preMapLoad.getScene().getExtendedTiles();
+        WorldView wv = preMapLoad.getWorldView();
+        int z = preMapLoad.getWorldView().getPlane();
+
+        for (int x = 0; x < Constants.EXTENDED_SCENE_SIZE; ++x) {
+            for (int y = 0; y < Constants.EXTENDED_SCENE_SIZE; ++y) {
+
+                Tile sceneTile = tiles[z][x][y];
+                if (sceneTile == null) {
+                    continue;
+                }
+
+                SceneTilePaint currentPaintJob = sceneTile.getSceneTilePaint();
+                if (currentPaintJob == null) {
+                    currentPaintJob = client.createSceneTilePaint(0,0,0,0,-1,0,true);
+                }
+
+                if (tilesToRender.contains(sceneTile.getWorldLocation())){
+                    continue;
+                }
+
+                Color mixer = config.claimedTileFillColor();
+                //short HSLcolor = JagexColor.rgbToHSL(mixer.getRGB(), 0.25d);
+                //public static final int HUE_MAX = 63;
+                //public static final int SATURATION_MAX = 7;
+                //public static final int LUMINANCE_MAX = 127;
+                int hne = JagexColor.unpackHue((short) currentPaintJob.getNeColor());
+                int sne = JagexColor.unpackSaturation((short) currentPaintJob.getNeColor());
+                int lne = JagexColor.unpackLuminance((short) currentPaintJob.getNeColor());
+                short Necolor = JagexColor.packHSL(hne,0,lne /5);
+
+                int hnw = JagexColor.unpackHue((short) currentPaintJob.getNwColor());
+                int snw = JagexColor.unpackSaturation((short) currentPaintJob.getNwColor());
+                int lnw = JagexColor.unpackLuminance((short) currentPaintJob.getNwColor());
+                short Nwcolor = JagexColor.packHSL(hnw,0,lnw / 5);
+
+                int hse = JagexColor.unpackHue((short) currentPaintJob.getSeColor());
+                int sse = JagexColor.unpackSaturation((short) currentPaintJob.getSeColor());
+                int lse = JagexColor.unpackLuminance((short) currentPaintJob.getSeColor());
+                short Secolor = JagexColor.packHSL(hse,0,lse / 5);
+
+                int hsw = JagexColor.unpackHue((short) currentPaintJob.getSwColor());
+                int ssw = JagexColor.unpackSaturation((short) currentPaintJob.getSwColor());
+                int lsw = JagexColor.unpackLuminance((short) currentPaintJob.getSwColor());
+                short Swcolor = JagexColor.packHSL(hsw,0,lsw / 5);
+
+                SceneTileModel
+
+                currentPaintJob.setNeColor(Necolor);
+                currentPaintJob.setNwColor(Nwcolor);
+                currentPaintJob.setSeColor(Secolor);
+                currentPaintJob.setSwColor(Swcolor);
+                currentPaintJob.setTexture(-1);
+                sceneTile.setSceneTilePaint(currentPaintJob);
+            }
+        }
+    }
+
+    public void reloadMap() {
+
+        forceRefreshGPU();
+
+        /*
+        clientThread.invokeLater(() -> {
+            if (client.getGameState() == GameState.LOGGED_IN) {
+                client.setGameState(GameState.LOADING);
+            }
+        });
+
+         */
+    }
+
+    public void forceRefreshGPU(){
+
+        log.debug("FORCE REFRESHING GPU PLUGIN");
+
+        SwingUtilities.invokeLater(() ->
+        {
+            for (Plugin plugin : pluginManager.getPlugins()) {
+                if (plugin.getName().equals("GPU")) {
+
+                    try {
+                        pluginManager.stopPlugin(plugin);
+                    } catch (PluginInstantiationException e) {
+                        throw new RuntimeException(e);
+                    }
+
+                    try {
+                        pluginManager.startPlugin(plugin);
+                    } catch (PluginInstantiationException e) {
+                        throw new RuntimeException(e);
+                    }
+
+                }
+            }
+        });
     }
 
     private void autoMark() {
@@ -354,6 +480,7 @@ public class TilemanModePlugin extends Plugin {
     }
 
     private void updateTileCountFromConfigs() {
+
         log.debug("Updating tile counter");
 
         int totalTiles = 0;
@@ -735,6 +862,10 @@ public class TilemanModePlugin extends Plugin {
             }
         }
         return false;
+    }
+
+    public void print(String msg) {
+        log.debug(msg);
     }
 
     private boolean regionIsOnTutorialIsland(int regionId) {
